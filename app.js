@@ -30,17 +30,37 @@ function updateCurrentDate() {
 
 // 更新今日数据显示
 async function updateTodayStats() {
-    const today = formatDateForInput(new Date());
-    const snapshot = await db.collection(SALES_COLLECTION)
-        .where('date', '==', today)
-        .get();
+    const today = new Date();
+    const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    const lastDayOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+    
+    const firstDayFormatted = formatDateForInput(firstDayOfMonth);
+    const lastDayFormatted = formatDateForInput(lastDayOfMonth);
+    
+    try {
+        const snapshot = await db.collection(SALES_COLLECTION)
+            .where('date', '>=', firstDayFormatted)
+            .where('date', '<=', lastDayFormatted)
+            .get();
 
-    if (!snapshot.empty) {
-        const data = snapshot.docs[0].data();
-        todayWechatElement.textContent = data.wechatAdds;
-        todaySamplesElement.textContent = data.samples;
-        todaySalesElement.textContent = `¥${data.sales.toFixed(2)}`;
-    } else {
+        let totalWechat = 0;
+        let totalSamples = 0;
+        let totalSales = 0;
+
+        if (!snapshot.empty) {
+            snapshot.forEach(doc => {
+                const data = doc.data();
+                totalWechat += data.wechatAdds;
+                totalSamples += data.samples;
+                totalSales += data.sales;
+            });
+        }
+        
+        todayWechatElement.textContent = totalWechat;
+        todaySamplesElement.textContent = totalSamples;
+        todaySalesElement.textContent = `¥${totalSales.toFixed(2)}`;
+    } catch (error) {
+        console.error('获取月度数据时出错:', error);
         todayWechatElement.textContent = '0';
         todaySamplesElement.textContent = '0';
         todaySalesElement.textContent = '¥0.00';
@@ -122,7 +142,7 @@ async function checkDateExists(date) {
     return !snapshot.empty;
 }
 
-// 添加销售数据
+// 添加新数据
 async function addSalesData(date, wechatAdds, samples, sales) {
     return db.collection(SALES_COLLECTION).add({
         date: date,
@@ -130,6 +150,9 @@ async function addSalesData(date, wechatAdds, samples, sales) {
         samples: samples,
         sales: sales,
         timestamp: firebase.firestore.FieldValue.serverTimestamp()
+    }).then(() => {
+        // 更新本月统计
+        updateTodayStats();
     });
 }
 
@@ -146,6 +169,9 @@ async function updateSalesData(date, wechatAdds, samples, sales) {
             samples: samples,
             sales: sales,
             timestamp: firebase.firestore.FieldValue.serverTimestamp()
+        }).then(() => {
+            // 更新本月统计
+            updateTodayStats();
         });
     }
 }
@@ -157,7 +183,9 @@ async function deleteSalesData(docId) {
             showLoading();
             await db.collection(SALES_COLLECTION).doc(docId).delete();
             showToast('成功', '数据已删除');
-            loadData();
+            await loadData();
+            // 更新本月统计
+            await updateTodayStats();
         } catch (error) {
             console.error('删除数据时出错:', error);
             showToast('错误', '删除数据失败: ' + error.message);
